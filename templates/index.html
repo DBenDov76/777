@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>777 — Random-from-TopM (Exclude Repeated Numbers in Last-2)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; background:#0b0f14; color:#e6eef8; margin:0; }
+    .wrap { max-width: 1100px; margin: 30px auto; padding: 16px; }
+    .card { background:#111826; border:1px solid #1f2a3a; border-radius:16px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.35); margin-bottom:16px; }
+    h1, h2 { margin: 8px 0 16px; }
+    input[type=file], input[type=number], input[type=text] { background:#0e1522; color:#e6eef8; border:1px solid #243246; border-radius:12px; padding:10px; }
+    button { background:#2b7fff; border:none; color:#fff; padding:12px 18px; border-radius:12px; font-weight:600; cursor:pointer; }
+    button:hover { opacity:.92; }
+    .grid { display:grid; gap:10px; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); }
+    .pill { display:inline-block; background:#162338; padding:6px 10px; border-radius:999px; margin:4px; border:1px solid #23324a; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { border-bottom:1px solid #203047; padding:10px; text-align:center; }
+    .score { font-weight:700; }
+    .muted { color:#99a9c3; }
+    .hint { font-size: 12px; color:#8fa6c9; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .kpi { background:#0b1b2e; border:1px solid #1e3050; border-radius:10px; padding:8px 10px; display:inline-block; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>777 — 17 לפי Random-from-TopM (הסרת המספרים שחזרו פעמיים בשני המשחקים האחרונים)</h1>
+      <p class="hint">כללי 7: (1) לכל היותר אחד מהמספרים 10/20/30/40/50/60/70, (2) אין מספרים עוקבים כלל בקומבינציה.</p>
+      <p class="hint">כלל 17: יוסרו רק המספרים שהופיעו פעמיים (גם במשחק האחרון וגם בקודם).</p>
+      <div class="row">
+        <input type="file" id="file" accept=".csv">
+        <label>K (חלון): <input type="number" id="K" value="60" min="10" max="300" style="width:80px"></label>
+        <label>λ (דעיכה): <input type="text" id="lam" value="0.05" style="width:80px"></label>
+        <label>M (Top-M): <input type="number" id="M" value="50" min="17" max="70" style="width:80px"></label>
+        <label># סטים 17: <input type="number" id="nsets" value="5" min="1" max="20" style="width:80px"></label>
+        <label>Seed: <input type="number" id="seed" value="42" style="width:100px"></label>
+      </div>
+      <div class="row">
+        <label>כמות קומבינציות 7: <input type="number" id="want" value="10" min="3" max="30" style="width:80px"></label>
+        <label>חפיפה מקס' (בין 7): <input type="number" id="overlap" value="3" min="0" max="6" style="width:80px"></label>
+        <button id="run">ייצור סטים (17) + 7</button>
+        <button id="bt">Backtest</button>
+      </div>
+      <p class="hint">הקובץ: שורה 1 (עליון) = המשחק האחרון.</p>
+    </div>
+
+    <div id="out17" class="card" style="display:none;">
+      <h2>סטים של 17</h2>
+      <div id="sets17"></div>
+      <p><a id="sets17csv" href="#" download>הורדת כל ה־17 כ־CSV</a></p>
+      <div id="excl" class="muted mono"></div>
+    </div>
+
+    <div id="out7" class="card" style="display:none;">
+      <h2>קומבינציות 7 — לכל סט 17</h2>
+      <div id="combos"></div>
+      <p><a id="combocsv" href="#" download>הורדת כל הקומבינציות כ־CSV</a></p>
+    </div>
+
+    <div id="bt_out" class="card" style="display:none;">
+      <h2>Backtest — תוצאות</h2>
+      <div id="bt_kpis"></div>
+      <pre id="bt_txt" class="mono" style="white-space:pre-wrap;"></pre>
+    </div>
+  </div>
+
+<script>
+const fileInput = document.getElementById('file');
+const K = document.getElementById('K');
+const lam = document.getElementById('lam');
+const M = document.getElementById('M');
+const nsets = document.getElementById('nsets');
+const seed = document.getElementById('seed');
+const want = document.getElementById('want');
+const overlap = document.getElementById('overlap');
+const runBtn = document.getElementById('run');
+const btBtn = document.getElementById('bt');
+
+function pill(n){ return `<span class="pill">${n}</span>`; }
+
+runBtn.onclick = async () => {
+  const f = fileInput.files[0]; if(!f) return alert('נא לבחור קובץ CSV');
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('K', K.value);
+  fd.append('lam', lam.value);
+  fd.append('M', M.value);
+  fd.append('n_sets', nsets.value);
+  fd.append('seed', seed.value);
+  fd.append('want', want.value);
+  fd.append('overlap', overlap.value);
+  const r = await fetch('/analyze', {method:'POST', body: fd});
+  const data = await r.json();
+  if(!r.ok) return alert(data.error || 'Error');
+
+  // Sets of 17
+  document.getElementById('out17').style.display = 'block';
+  const wrap17 = document.getElementById('sets17'); wrap17.innerHTML='';
+  data.sets17.forEach((s,i)=>{
+    const div = document.createElement('div'); div.className = 'card';
+    div.innerHTML = `<div class="row"><div style="min-width:140px;">סט #${i+1}</div><div>${s.map(pill).join('')}</div></div>`;
+    wrap17.appendChild(div);
+  });
+  document.getElementById('sets17csv').href = data.files.sets17_csv;
+
+  if (data.excluded_repeats_last2) {
+    document.getElementById('excl').innerHTML = "הוסרו (מספרים שהופיעו פעמיים בשני המשחקים האחרונים): " + data.excluded_repeats_last2.map(pill).join('');
+  }
+
+  // Combos 7 per set
+  document.getElementById('out7').style.display = 'block';
+  const combos = document.getElementById('combos'); combos.innerHTML='';
+  data.combos_by_set.forEach((lst,i)=>{
+    const card = document.createElement('div'); card.className='card';
+    const rows = lst.map((row,idx) => `<tr><td>${idx+1}</td><td>${row.numbers.map(pill).join('')}</td><td class='score'>${row.score.toFixed(2)}</td></tr>`).join('');
+    card.innerHTML = `<h3>סט #${i+1}</h3>
+                      <table><thead><tr><th>#</th><th>קומבינציה</th><th>ניקוד</th></tr></thead><tbody>${rows}</tbody></table>`;
+    combos.appendChild(card);
+  });
+  if (data.files.combos_csv) document.getElementById('combocsv').href = data.files.combos_csv;
+};
+
+btBtn.onclick = async () => {
+  const f = fileInput.files[0]; if(!f) return alert('נא לבחור קובץ CSV');
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('K', K.value);
+  fd.append('lam', lam.value);
+  fd.append('M', M.value);
+  fd.append('seed', seed.value);
+  const r = await fetch('/backtest', {method:'POST', body: fd});
+  const data = await r.json();
+  if(!r.ok) return alert(data.error || 'Error');
+  const s = data.stats;
+  const kpis = document.getElementById('bt_kpis');
+  kpis.innerHTML = [
+    `<span class=\"kpi\">P(≥7): ${(100*s.p_ge_7).toFixed(1)}%</span>`,
+    `<span class=\"kpi\">P(≥6): ${(100*s.p_ge_6).toFixed(1)}%</span>`,
+    `<span class=\"kpi\">P(≥5): ${(100*s.p_ge_5).toFixed(1)}%</span>`,
+    `<span class=\"kpi\">ממוצע: ${s.mean_hits.toFixed(3)}%</span>`,
+    `<span class=\"kpi\">מקס': ${s.max_hits}</span>`,
+    `<span class=\"kpi\">מינ': ${s.min_hits}</span>`,
+  ].join(' ');
+  document.getElementById('bt_out').style.display = 'block';
+  const txt = [
+    `אסטרטגיה: ${data.strategy}  |  פרמטרים: K=${data.params.K}, λ=${data.params.lam}, M=${data.params.M}`,
+    `משחקים בבדיקה: ${s.games_tested}`,
+    `ממוצע פגיעות ב-17: ${s.mean_hits.toFixed(3)} (חציון ${s.median_hits.toFixed(3)})`,
+    `P(>=5)=${(100*s.p_ge_5).toFixed(1)}%  P(>=6)=${(100*s.p_ge_6).toFixed(1)}%  P(>=7)=${(100*s.p_ge_7).toFixed(1)}%  P(>=8)=${(100*s.p_ge_8).toFixed(1)}%`
+  ].join('\\n');
+  document.getElementById('bt_txt').innerText = txt;
+};
+</script>
+</body>
+</html>
