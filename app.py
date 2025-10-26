@@ -1,5 +1,4 @@
-
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 import pandas as pd, numpy as np, math, itertools, datetime, random, os, io, threading, webbrowser
 
 app = Flask(__name__)
@@ -44,7 +43,6 @@ def count_in_window(window):
         for n in r: c[n]+=1
     return c
 
-# ===== scoring logic (auto-blend as before) =====
 def build_scores(hist, t, K=60, lam=0.05):
     K = min(K, len(hist[:t]))
     recent = hist[:t][-K:]
@@ -104,9 +102,6 @@ def scores_auto_blend(hist, t):
     return scores
 
 def apply_strict_recent_exclusions(scores, hist, t):
-    # Strict rules requested:
-    # - If a number appeared >=2 in last 3 games, exclude.
-    # - If a number appeared >=3 in last 5 games, exclude.
     last3 = hist[max(0, t-3):t]
     last5 = hist[max(0, t-5):t]
     c3 = count_in_window(last3)
@@ -121,22 +116,17 @@ def sample17_excluding_rules(hist, t, M=50, seed=42):
     scores = apply_strict_recent_exclusions(scores, hist, t)
 
     order_all = sorted(ALL, key=lambda n: scores[n], reverse=True)
-
-    # Also keep the old rule: remove numbers repeated in BOTH last two games
     excl_last2 = set()
     if t>=2:
         excl_last2 = set(hist[t-1]) & set(hist[t-2])
 
-    # Pool from Top-M minus last2 excl
     pool = [n for n in order_all[:M] if n not in excl_last2 and scores[n] > -999]
-    # Backfill from the rest if needed
     if len(pool) < 17:
         for n in order_all[M:]:
             if n not in excl_last2 and scores[n] > -999 and n not in pool:
                 pool.append(n)
             if len(pool) >= 17:
                 break
-    # Final fallback to ensure 17 (avoid dead-ends)
     if len(pool) < 17:
         for n in ALL:
             if n not in excl_last2 and scores[n] > -999 and n not in pool:
@@ -160,7 +150,6 @@ def combo_filter_and_score(s17, hist, t, K=60, lam=0.05):
     c10 = count_in_window(recent[-10:]) if len(recent) >= 10 else count_in_window(recent)
 
     def combo_ok(c7):
-        # Keep your original strict filters
         if sum(1 for x in c7 if x in MULT10) > 1:
             return False
         if has_any_consecutive(c7):
@@ -173,7 +162,6 @@ def combo_filter_and_score(s17, hist, t, K=60, lam=0.05):
             return False
         return True
 
-    # Use the same score map as selection
     scores = scores_auto_blend(hist, t)
     scores = apply_strict_recent_exclusions(scores, hist, t)
 
@@ -204,9 +192,10 @@ def diversify(ranked, raw_scores, want=10, max_overlap=3):
         sc_norm = []
     return chosen, sc_norm
 
+# ✅ Render-compatible homepage
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    return render_template('index.html')
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -216,7 +205,6 @@ def analyze():
     hist_rows = parse_history_from_bytes(content)
     chron = chronological(True, hist_rows)
 
-    # Read UI params (exactly as your original HTML expects)
     want = int(request.form.get('want','10'))
     overlap = int(request.form.get('overlap','3'))
     seed_base = int(request.form.get('seed','42'))
@@ -239,7 +227,6 @@ def analyze():
         if excl_debug is None:
             excl_debug = excl_last2
 
-        # Prime count check (warn-only)
         prime_count = sum(1 for n in s17 if n in PRIMES)
         if prime_count < 3 or prime_count > 6:
             prime_warnings.append(f"⚠️ בסט #{i+1} יש {prime_count} ראשוניים — נדרש בין 3 ל־6.")
@@ -248,12 +235,10 @@ def analyze():
         chosen7, norm7 = diversify(ranked7, raw7, want=want, max_overlap=overlap)
         combos_all.append([{'numbers': list(c), 'score': round(sc,2)} for c,sc in zip(chosen7, norm7)])
 
-    # Files
-    ts = datetime.datetime.now() + datetime.timedelta(hours=3)  # keep as before
+    ts = datetime.datetime.now() + datetime.timedelta(hours=3)
     ts_str = ts.strftime('%Y%m%d_%H%M')
     out_dir = 'outputs'; os.makedirs(out_dir, exist_ok=True)
 
-    # Save sets17 CSV
     sets_rows = []
     for i, s17 in enumerate(sets17, start=1):
         row = {'set_id': i}
@@ -263,7 +248,6 @@ def analyze():
     sets_path = os.path.join(out_dir, f'sets17_{ts_str}.csv')
     pd.DataFrame(sets_rows).to_csv(sets_path, index=False)
 
-    # Save combos CSV (flattened)
     combo_rows = []
     for i, lst in enumerate(combos_all, start=1):
         for rank, item in enumerate(lst, start=1):
@@ -294,13 +278,7 @@ def analyze():
 def download_file(fname):
     return send_from_directory('outputs', fname, as_attachment=True)
 
-def open_browser():
-    webbrowser.open_new('http://127.0.0.1:5000/')
-
+# ✅ Render-compatible entry point
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-# Render-compatible entry
-#
-    threading.Timer(1.0, open_browser).start()
-    app.run(host='127.0.0.1', port=5000, debug=False)
